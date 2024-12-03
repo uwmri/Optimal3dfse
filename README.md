@@ -14,8 +14,10 @@ This allows for accurate gradient calculation by Jacobians [1-3] for multi-chann
 
 ## Description
 
-`train.py`: jointly trains the sampling coordinates and unrolled DL reconstruction. It requires pseudo ground truth images acquired with standard T2-prepped 3DFSE and reconstructed with compressed sensing.
-`model.py`: contains the simple blockwise denoiser we used in the unrolled DL reconstruction.
+`train.py`: jointly trains the sampling coordinates and unrolled DL reconstruction. It requires pseudo ground truth images acquired with standard T2-prepped 3DFSE and reconstructed with compressed sensing.  
+
+`model.py`: contains the simple blockwise denoiser we used in the unrolled DL reconstruction.  
+
 `recon.py`: reconstructs prosepctive scans acquired with learned optimal sampling. It needs raw k-space data and the sampling coordinates txt files, which can be provided upon request.
 
 
