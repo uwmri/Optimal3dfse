@@ -1,31 +1,11 @@
-import os
-import logging
-from math import ceil
-
 import numpy as np
-import matplotlib
-matplotlib.use('TKAgg')
-import matplotlib.pyplot as plt
-import h5py
-from sigpy import backend
-from sigpy.fourier import _scale_coord, _apodize, _get_oversamp_shape
 
 def pca_coil_compression(kdata=None, axis=0, target_channels=None):
-    logger = logging.getLogger('PCA_CoilCompression')
 
-    if isinstance(kdata, list):
-        logger.info('Passed k-space is a list, using encode 0 for compression')
-        kdata_cc = kdata[0]
-    else:
-        kdata_cc = kdata
-
-    logger.info(f'Compressing to {target_channels} channels, along axis {axis}')
-    logger.info(f'Initial  size = {kdata_cc.shape} ')
 
     # Put channel to first axis
-    kdata_cc = np.moveaxis(kdata_cc, axis, -1)
+    kdata_cc = np.moveaxis(kdata, axis, -1)
     old_channels = kdata_cc.shape[-1]
-    logger.info(f'Old channels =  {old_channels} ')
 
     # Subsample to reduce memory for SVD
     mask_shape = np.array(kdata_cc.shape)
@@ -33,7 +13,6 @@ def pca_coil_compression(kdata=None, axis=0, target_channels=None):
 
     # Create a subsampled array
     kcc = np.zeros((old_channels, np.sum(mask)), dtype=kdata_cc.dtype)
-    logger.info(f'Kcc Shape = {kcc.shape} ')
     for c in range(old_channels):
         ktemp = kdata_cc[..., c]
         kcc[c, :] = ktemp[mask]

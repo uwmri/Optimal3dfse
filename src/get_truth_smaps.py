@@ -9,27 +9,36 @@ import glob
 import sigpy as sp
 import sigpy.mri as mri
 from utils import pca_coil_compression
+from pathlib import Path
 
 id = 1
-data_roots = [rf'I:\Data\Scans_i\Opt3dfse_ADRC_add_on\AEA_08953_2024-10-15\08953_00011_Sag_T2_FLAIR_CUBE\raw_data',]
-recon_root = rf'I:\Data\Scans_i\Opt3dfse_ADRC_add_on\AEA_08953_2024-10-15\08953_00011_Sag_T2_FLAIR_CUBE\raw_data'
-# scan_root =  rf'I:\Data\T2FLAIRTEST_V1_01261_2023-11-30'
+data_root = r'S:\Opt3dfse_ADRC_add_on\MAO_09164_2024-12-04'
+data_roots = [
+    str(p) for p in Path(data_root).rglob('*_Sag_T2_FLAIR_CUBE/raw_data')
+    if p.is_dir() and not any(p.glob('recon_l1w_z256*.h5'))
+]
+
+
+
+# turn do_recon off just to get smaps. To use this smaps for the two short scan recon, need to 
+# use zres_zp=256. as the model was trained on 256^3 data.
 do_recon = True
-coil_compression = False
-bias_correction = True
+coil_compression = True
+bias_correction = False
 recon_type = 'l1w'
 
 num_cases = len(data_roots)
 xfov = 250
 xres = 256
 yres = 256
-zres = 132                                  # min zres in all cases. Crop bigger ones to this size
+zres = 128                                  # min zres in all cases. Crop bigger ones to this size
 zres_mm = 1.6
-zres_zp = int(zres*zres_mm/(xfov/xres))     # this is for imagej, as it can only display isotropic voxels
-# zres_zp = 256                             # for generating 256^3 data for easy training
-zres_opt = 209
+# zres_zp = int(zres*zres_mm/(xfov/xres))     # use this option if you want correct image aspect ratio is displayed in imagej. 
+                                            # As it can only display isotropic voxels
+zres_zp = 256
 
-# when matrix is smaller than 256*256*211, always recon to this size (zero pad the kspace)
+
+# when matrix is smaller, always recon to this size (zero pad the kspace)
 xres_raw = 256
 yres_raw = 256
 if coil_compression:
@@ -52,10 +61,7 @@ for data_root in data_roots:
         kdata = kdata[:,66:197,...]
         num_coils = kdata.shape[0]
         zres_case = kdata.shape[1]
-        # if need to crop kdata
-        # idxL = int((zres_case-zres+1)/2)-1
-        # idxR = idxL+zres
-        # kdata = kdata[:,idxL:idxR,...]
+
 
         kdata_zp = np.zeros((num_coils, zres_zp, yres, xres), dtype=np.complex64)
         idxZ_zp = int((zres_zp-zres+1)/2)
@@ -114,8 +120,6 @@ for data_root in data_roots:
 
         if do_recon:
             im_cube = im[::-1,::-1,::-1]
-            idxZ_opt = int((zres_zp-zres_opt)/2)
-            im_cube = im_cube[:,:,idxZ_opt:zres_opt+idxZ_opt]
         else:
             im_cube = im
 

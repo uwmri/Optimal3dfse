@@ -9,14 +9,14 @@ import numpy as np
 import cupy as cp
 import sigpy as sp
 from sigpy import mri
-from nufft_sigpy import NUFFT, NUFFTadjoint
+from .nufft_sigpy import NUFFT, NUFFTadjoint
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import logging
 import glob
 
-from model import ResBlock, BlockWiseCNN
-from utils_DL import RunningAverage
+from .model import ResBlock, BlockWiseCNN
+from .utils_DL import RunningAverage
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -88,6 +88,14 @@ except:
 xres = 256
 yres = 256
 zres = 132
+sphere_center = (xres // 2, yres // 2, zres // 2)
+x, y, z = np.ogrid[:xres, :yres, :zres]
+distance = np.sqrt((x - sphere_center[0])**2 + (y - sphere_center[1])**2 + (z - sphere_center[2])**2)
+mask = np.where(distance <= xres//2, 1, 0)
+ksp_central = 100
+shell = np.where(distance <= ksp_central, 0, mask)
+shell = sp.to_device(shell, sp.Device(0))
+
 
 # create a mask if it's the first run. Both acc and num_views(npe) need to be specified as npe needs to be integer*ETL.
 if args.first_run:
@@ -199,6 +207,11 @@ for epoch in range(args.Nepochs):
         ktruth = cp.fft.ifftshift(truth_gpu, axes=(-3, -2, -1))
         ktruth = cp.fft.fftn(ktruth, axes=(-3, -2, -1))
         ktruth = cp.fft.fftshift(ktruth, axes=(-3, -2, -1))
+        kedge = ktruth * shell
+        kedge = kedge.reshape((-1,))
+        kedge = kedge[np.nonzero(kedge)]
+        sigma_est_real = np.median(np.abs(np.real(kedge)))
+        sigma_est_imag = np.median(np.abs(np.imag(kedge)))
 
         # estimate noise sigma from the shell of outer kspace
         sigma_real = gaussian_level * sigma_est_real

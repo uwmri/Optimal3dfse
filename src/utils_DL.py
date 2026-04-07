@@ -34,6 +34,23 @@ class ComplexConv3d(nn.Module):
         return self.conv_r(input.real) + 1j*self.conv_r(input.imag)
 
 
+class TrueComplexConv3d(nn.Module):
+    """
+        do conv on real and imag separately
+    """
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
+                 dilation=1, groups=1, bias=False):
+        super(TrueComplexConv3d, self).__init__()
+        self.conv_x = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        self.conv_y = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+
+    def forward(self, input):
+        re = self.conv_x(input.real) - self.conv_y(input.imag)
+        im = self.conv_x(input.imag) + self.conv_y(input.real)
+        return re + 1j * im
+    
+
 class ComplexReLU(nn.Module):
     def __init__(self):
         super(ComplexReLU, self).__init__()
