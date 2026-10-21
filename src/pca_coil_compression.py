@@ -1,57 +1,49 @@
+import logging
+
 import numpy as np
 
-def pca_coil_compression(kdata=None, axis=0, target_channels=None):
 
+def pca_coil_compression(kdata=None, axis=0, target_channels=None, sample_frac=0.05, seed=0):
 
-    # Put channel to first axis
-    kdata_cc = np.moveaxis(kdata, axis, -1)
-    old_channels = kdata_cc.shape[-1]
+    """Compress coils to their ``target_channels`` principal components.
 
-    # Subsample to reduce memory for SVD
-    mask_shape = np.array(kdata_cc.shape)
-    mask = np.random.choice([True, False], size=mask_shape[:-1], p=[0.05, 1 - 0.05])
+    Args:
+        kdata: array with coils along ``axis``, or a list of such arrays (one
+            per encoding). For a list, the compression matrix is estimated from
+            entry 0 and applied to every entry, so all encodings share virtual
+            coils.
+        target_channels: channels to keep (all, reordered by energy, if None).
+        sample_frac: fraction of samples used to estimate the coil covariance.
 
-    # Create a subsampled array
-    kcc = np.zeros((old_channels, np.sum(mask)), dtype=kdata_cc.dtype)
-    for c in range(old_channels):
-        ktemp = kdata_cc[..., c]
-        kcc[c, :] = ktemp[mask]
+    Returns:
+        The same structure with ``target_channels`` along ``axis``.
+    """
 
-    kdata_cc = np.moveaxis(kdata_cc, -1, axis)
-
-    #  SVD decomposition
-    logger.info(f'Working on SVD of {kcc.shape}')
-    u, s, vh = np.linalg.svd(kcc, full_matrices=False)
-
-    logger.info(f'S = {s}')
+    logger = logging.getLogger('PCA_CoilCompression')
 
     if isinstance(kdata, list):
         logger.info('Passed k-space is a list, using encode 0 for compression')
 
-        for e in range(len(kdata)):
-            kdata[e] = np.moveaxis(kdata[e], axis, -1)
-            kdata[e] = np.expand_dims(kdata[e], -1)
-            logger.info(f'Shape = {kdata[e].shape}')
-            kdata[e] = np.matmul(u, kdata[e])
-            kdata[e] = np.squeeze(kdata[e], axis=-1)
-            kdata[e] = kdata[e][..., :target_channels]
-            kdata[e] = np.moveaxis(kdata[e], -1, axis)
+    ref = kdata[0] if isinstance(kdata, list) else kdata    # ref (C, ...)
+    ref = np.moveaxis(ref, axis, -1)                        # ref (..., C)
+    num_coils = ref.shape[-1]
 
-        for ksp in kdata:
-            logger.info(f'Final Shape {ksp.shape}')
-    else:
-        # Now iterate over and multiply by u
-        kdata = np.moveaxis(kdata, axis, -1)
-        kdata = np.expand_dims(kdata, -1)
-        kdata = np.matmul(u, kdata)
-        logger.info(f'Shape = {kdata.shape}')
+    # Subsample to reduce memory for SVD
+    rng = np.random.default_rng(seed)
+    mask = rng.random(ref.shape[:-1]) < sample_frac
 
-        # Crop to target channels
-        kdata = np.squeeze(kdata, axis=-1)
-        kdata = kdata[..., :target_channels]
+    kcc = ref[mask].T  # (C, # of true values, flattened)
+    logger.info(f"PCA coil compression {num_coils} -> {target_channels} "
+                f"from {kcc.shape[1]} samples")
+    u, s, _ = np.linalg.svd(kcc, full_matrices=False)       # u (C, C), s (C,), Vh (C, n_samples)
+    logger.info(f"singular values: {s}")
+    proj = u.conj().T[:target_channels]  # (target, C)
 
-        # Put back
-        kdata = np.moveaxis(kdata, -1, axis)
-        logger.info(f'Final shape = {kdata.shape}')
+    def apply(k):
+        k = np.moveaxis(k, axis, -1)                        # k (..., C)
+        k = k @ proj.T                                      # k (..., target_channels)
+        return np.moveaxis(k, -1, axis)                     # k with target_channels along original axis
 
-    return kdata
+    if isinstance(kdata, list):
+        return [apply(k) for k in kdata]
+    return apply(kdata)

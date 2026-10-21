@@ -53,6 +53,7 @@ parser.add_argument('--nro', type=int, default=256)
 parser.add_argument('--num_views', type=int, default=2720)
 parser.add_argument('--acc', type=float, default=6)
 parser.add_argument('--learning_rate', type=float, default=0.001)
+parser.add_argument('--weight_decay', type=float, default=0.0)
 parser.add_argument('--num_coils', type=int, default=12)
 parser.add_argument('--pname', type=str, default=f'fse_{Ntrial}')
 parser.add_argument('--resume_train', action='store_true', default=True)
@@ -154,13 +155,17 @@ kzc.requires_grad = True
 traj_xread = np.zeros((xres, 3), dtype=np.float32)
 traj_xread[:, 0] = np.linspace(-xres / 2, xres / 2, xres)
 
-optimizer = torch.optim.Adam([{'params': denoiser_bw.parameters()},
-                              {'params': scale_global},
-                             {'params': kyc},
-                             {'params': kzc},
-                              ], lr=1e-3, weight_decay=1e-4)
+# weight decay on the denoiser only; decaying the coords pulls them toward the k-space center
+optimizer = torch.optim.AdamW([{'params': denoiser_bw.parameters(), 'weight_decay': args.weight_decay},
+                               {'params': scale_global},
+                               {'params': kyc},
+                               {'params': kzc},
+                               ], lr=1e-3, weight_decay=0.0)
 if args.resume_train:
     optimizer.load_state_dict(state['optimizer'])
+    # load_state_dict restores the saved weight_decay, which older checkpoints applied to every group
+    for group, wd in zip(optimizer.param_groups, [args.weight_decay, 0.0, 0.0, 0.0]):
+        group['weight_decay'] = wd
 denoiser_bw.cuda()
 
 # save some eval images
@@ -169,10 +174,6 @@ try:
     os.remove(evalimagesfile)
 except OSError:
     pass
-
-# hard cutoff: the coordinates cannot exceed opres
-activationY = torch.nn.Hardtanh(min_val=- yres / 2 , max_val=yres / 2, inplace=False)
-activationZ = torch.nn.Hardtanh(min_val=- zres / 2, max_val=zres / 2 , inplace=False)
 
 for epoch in range(args.Nepochs):
 
@@ -193,9 +194,6 @@ for epoch in range(args.Nepochs):
     for cs in range(num_cases):
 
         optimizer.zero_grad()
-
-        kyc_clamp = activationY(kyc)
-        kzc_clamp = activationZ(kzc)
 
         i = int(idx[cs])
         file = data_files[i]
@@ -241,8 +239,8 @@ for epoch in range(args.Nepochs):
         smaps_tensor.requires_grad = False
 
         # generate full coordinates
-        kyzc = torch.stack((kyc_clamp, kzc_clamp), axis=1)
-        coords_centers = torch.stack((kxc, kyc_clamp, kzc_clamp), axis=1)
+        kyzc = torch.stack((kyc, kzc), axis=1)
+        coords_centers = torch.stack((kxc, kyc, kzc), axis=1)
         traj_torch = torch.from_numpy(traj_xread.copy()).cuda()
         coord = torch.zeros(traj_xread.shape + (num_views,), dtype=torch.float32).cuda()
         for v in range(num_views):
@@ -277,11 +275,13 @@ for epoch in range(args.Nepochs):
         lossMSE = (im - truth_tensor).abs().pow(2).sum().pow(0.5) / truth_tensor.abs().pow(2).sum().pow(0.5)
         lossMSE.backward(retain_graph=True)
         optimizer.step()
+        # hard cutoff: the coordinates cannot exceed opres. Clamp the parameters in place rather than
+        # passing them through Hardtanh, whose zero gradient outside the range would freeze them there.
+        with torch.no_grad():
+            kyc.clamp_(-yres / 2, yres / 2)
+            kzc.clamp_(-zres / 2, zres / 2)
 
         train_avg.update(lossMSE.detach().item())
-    
-    kyc_clamp = activationY(kyc)
-    kzc_clamp = activationZ(kzc)
 
     writer_train.add_scalar('LossMSE', train_avg.avg(), epoch)
     writer_train.add_scalar('scale_global', scale_global[0].detach().cpu().numpy(), epoch)
@@ -314,10 +314,10 @@ for epoch in range(args.Nepochs):
             smaps_tensor.requires_grad = False
             smaps_tensor = torch.rot90(smaps_tensor, k=1, dims=(1, 2))
     
-            kyzc = torch.stack((kyc_clamp, kzc_clamp), axis=1)
-            coords_centers = torch.stack((kxc, kyc_clamp, kzc_clamp), axis=1)
+            kyzc = torch.stack((kyc, kzc), axis=1)
+            coords_centers = torch.stack((kxc, kyc, kzc), axis=1)
             traj_torch = torch.from_numpy(traj_xread.copy()).cuda()
-    
+
             coord = torch.zeros(traj_xread.shape + (num_views,), dtype=torch.float32).cuda()
             for v in range(num_views):
                 coord[..., v] = traj_torch + coords_centers[v].unsqueeze(0)
